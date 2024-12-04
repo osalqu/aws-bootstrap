@@ -1,10 +1,6 @@
-#!/bin/bash
-
-# Load AWS credentials
 source aws_credentials.sh
 
-# New stack name
-STACK_NAME="awsbootstrap-$(date +%Y%m%d%H%M%S)" # Updated stack name to create a new stack
+STACK_NAME=awsbootstrap
 REGION=us-east-1
 CLI_PROFILE=awsbootstrap
 
@@ -21,9 +17,9 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides EC2InstanceType=$EC2_INSTANCE_TYPE
 
-# If the deploy succeeded, show the DNS name of the created instance
+    # If the deploy succeeded, show the DNS name of the created instance
 if [ $? -eq 0 ]; then
   aws cloudformation list-exports \
-    --profile $CLI_PROFILE \
-    --query "Exports[?Name=='InstanceEndpoint'].Value"
+    --profile awsbootstrap \
+    --query "Exports[?Name=='InstanceEndpoint'].Value" 
 fi
