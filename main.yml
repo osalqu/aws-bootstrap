@@ -111,10 +111,11 @@ Resources:
             nvm install v12.7.0 && nvm alias default v12.7.0 && nvm use v12.7.0"
       
           # Deploy application
-          su - ec2-user -c "mkdir -p /home/ec2-user/app && cd /home/ec2-user/app && \
-            wget https://github.com/<username>/aws-bootstrap/archive/master.zip -O app.zip && \
+          su - ec2-user -c "source /home/ec2-user/.bashrc && \
+            mkdir -p /home/ec2-user/app && cd /home/ec2-user/app && \
+            wget https://github.com/mygithubuser/aws-bootstrap/archive/master.zip -O app.zip && \
             unzip app.zip && mv aws-bootstrap-master/* . && npm install && npm start"
-      
+
           # Signal CloudFormation
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance
 
