@@ -69,52 +69,70 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
-
-          # send script output to /tmp so we can debug boot failures
-          exec > /tmp/userdata.log 2>&1 
-
-          # Update all packages
-          yum -y update
-
-          # Get latest cfn scripts; https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/best-practices.html#cfninit
-          yum install -y aws-cfn-bootstrap
-
-          # Have CloudFormation install any files and packages from the metadata
-          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance 
-
-          cat > /tmp/install_script.sh << EOF 
-            # START
-            echo "Setting up NodeJS Environment"
-            curl https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash
-
-            # Dot source the files to ensure that variables are available within the current shell
-            . /home/ec2-user/.nvm/nvm.sh
-            . /home/ec2-user/.bashrc
-
-            # Install NVM, NPM, Node.JS
-            nvm alias default v12.7.0
-            nvm install v12.7.0
-            nvm use v12.7.0
-
-            # Download latest code, unzip it into /home/ec2-user/app
-            wget https://github.com/ozcli/aws-bootstrap/archive/master.zip 
-            unzip master.zip
-            mv aws-bootstrap-master app
-
-            # Create log directory
-            mkdir -p /home/ec2-user/app/logs
-
-            # Run server
-            cd app
-            npm install
-            npm start
-          EOF
-
-          chown ec2-user:ec2-user /tmp/install_script.sh && chmod a+x /tmp/install_script.sh
-          sleep 1; su - ec2-user -c "/tmp/install_script.sh" 
-
-          # Signal to CloudFormation that the instance is ready
-          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance 
+          set -euo pipefail
+          trap 'echo "Error on line $LINENO"; exit 1' ERR
+          
+          exec > >(tee /var/log/userdata.log|logger -t userdata) 2>&1
+          
+          # Validate AWS metadata
+          if ! curl -s http://169.254.169.254/latest/meta-data/ >/dev/null; then
+            echo "AWS metadata service unavailable. Exiting."
+            exit 1
+          fi
+          
+          # Retry function
+          function retry {
+            local n=0
+            local max=5
+            local delay=10
+            while true; do
+              "$@" && break || {
+                if [[ $n -lt $max ]]; then
+                  ((n++))
+                  echo "Command failed. Attempt $n/$max. Retrying in $delay seconds..."
+                  sleep $delay
+                else
+                  echo "The command has failed after $n attempts."
+                  return 1
+                fi
+              }
+            done
+          }
+          
+          # Update packages
+          retry yum -y update
+          
+          # Install dependencies
+          retry yum install -y aws-cfn-bootstrap curl unzip
+          
+          # Run cfn-init
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance || { echo "cfn-init failed"; exit 1; }
+          
+          # Node.js environment setup
+          if ! curl https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash; then
+            echo "Failed to install NVM. Exiting."
+            exit 1
+          fi
+          
+          source /home/ec2-user/.nvm/nvm.sh
+          retry nvm install v12.7.0
+          nvm alias default v12.7.0
+          nvm use v12.7.0
+          
+          # Deploy application
+          retry wget https://github.com/<username>/aws-bootstrap/archive/master.zip -O /tmp/master.zip
+          unzip /tmp/master.zip -d /home/ec2-user || { echo "Failed to unzip application"; exit 1; }
+          mv /home/ec2-user/aws-bootstrap-master /home/ec2-user/app
+          mkdir -p /home/ec2-user/app/logs
+          
+          # Run application
+          cd /home/ec2-user/app
+          retry npm install
+          retry npm start
+          
+          # Signal CloudFormation
+          /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance
+          echo "UserData script completed successfully."
           
       Tags:
         - Key: Name
