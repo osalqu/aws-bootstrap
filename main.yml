@@ -69,74 +69,52 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
+          exec > >(tee /var/log/userdata.log|logger -t userdata) 2>&1
           set -euo pipefail
           trap 'echo "Error on line $LINENO"; exit 1' ERR
-          
-          exec > >(tee /var/log/userdata.log|logger -t userdata) 2>&1
-          
-          # Validate AWS metadata
-          if ! curl -s http://169.254.169.254/latest/meta-data/ >/dev/null; then
-            echo "AWS metadata service unavailable. Exiting."
-            exit 1
-          fi
-          
-          # Retry function
-          function retry {
+      
+          # Retry function for YUM lock handling
+          function retry_with_yum_unlock {
             local n=0
             local max=5
             local delay=10
             while true; do
-              "$@" && break || {
-                if [[ $n -lt $max ]]; then
-                  ((n++))
-                  echo "Command failed. Attempt $n/$max. Retrying in $delay seconds..."
-                  sleep $delay
-                else
-                  echo "The command has failed after $n attempts."
-                  return 1
+              if yum -y "$@" 2>/dev/null; then
+                break
+              else
+                echo "YUM lock detected. Retrying in $delay seconds..."
+                sleep $delay
+                ((n++))
+                if [ $n -ge $max ]; then
+                  echo "Failed due to persistent YUM lock."
+                  exit 1
                 fi
-              }
+              fi
             done
           }
-          
+      
           # Update packages
-          retry yum -y update
-          
+          retry_with_yum_unlock update
+      
           # Install dependencies
-          retry yum install -y aws-cfn-bootstrap curl unzip
-          
+          retry_with_yum_unlock install -y aws-cfn-bootstrap curl unzip
+      
           # Run cfn-init
           /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance || { echo "cfn-init failed"; exit 1; }
-          
-          # Node.js environment setup
-          if ! curl https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash; then
-            echo "Failed to install NVM. Exiting."
-            exit 1
-          fi
-          
-          source /home/ec2-user/.nvm/nvm.sh
-          retry nvm install v12.7.0
-          nvm alias default v12.7.0
-          nvm use v12.7.0
-          
+      
+          # Install NVM and Node.js as ec2-user
+          su - ec2-user -c "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash"
+          su - ec2-user -c "export NVM_DIR='/home/ec2-user/.nvm' && \
+            [ -s '$NVM_DIR/nvm.sh' ] && . '$NVM_DIR/nvm.sh' && \
+            nvm install v12.7.0 && nvm alias default v12.7.0 && nvm use v12.7.0"
+      
           # Deploy application
-          retry wget https://github.com/<username>/aws-bootstrap/archive/master.zip -O /tmp/master.zip
-          unzip /tmp/master.zip -d /home/ec2-user || { echo "Failed to unzip application"; exit 1; }
-          mv /home/ec2-user/aws-bootstrap-master /home/ec2-user/app
-          mkdir -p /home/ec2-user/app/logs
-          
-          # Run application
-          cd /home/ec2-user/app
-          retry npm install
-          retry npm start
-          
+          su - ec2-user -c "mkdir -p /home/ec2-user/app && cd /home/ec2-user/app && \
+            wget https://github.com/<username>/aws-bootstrap/archive/master.zip -O app.zip && \
+            unzip app.zip && mv aws-bootstrap-master/* . && npm install && npm start"
+      
           # Signal CloudFormation
-          /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance
-          echo "UserData script completed successfully."
-          
-      Tags:
-        - Key: Name
-          Value: !Ref AWS::StackName
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance
 
 Outputs:
   InstanceEndpoint:
