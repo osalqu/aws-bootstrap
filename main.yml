@@ -113,7 +113,7 @@ Resources:
           # Deploy application
           su - ec2-user -c "source /home/ec2-user/.bashrc && \
             mkdir -p /home/ec2-user/app && cd /home/ec2-user/app && \
-            wget https://github.com/Osalqu/aws-bootstrap/archive/master.zip -O app.zip && \
+            wget https://github.com/osalqu/aws-bootstrap/archive/master.zip -O app.zip && \
             unzip app.zip && mv aws-bootstrap-master/* . && npm install && npm start"
 
           # Signal CloudFormation
