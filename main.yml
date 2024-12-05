@@ -102,12 +102,11 @@ Resources:
           # Run cfn-init
           /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance || { echo "cfn-init failed"; exit 1; }
       
-          # Install NVM as ec2-user
+          # Install NVM and initialize for ec2-user
           su - ec2-user -c "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash"
       
-          # Source .bashrc and set up Node.js
-          su - ec2-user -c "source ~/.bashrc && \
-            export NVM_DIR='/home/ec2-user/.nvm' && \
+          # Set up Node.js environment
+          su - ec2-user -c "export NVM_DIR='/home/ec2-user/.nvm' && \
             [ -s '$NVM_DIR/nvm.sh' ] && . '$NVM_DIR/nvm.sh' && \
             nvm install v12.7.0 && nvm alias default v12.7.0 && nvm use v12.7.0"
       
@@ -118,7 +117,6 @@ Resources:
       
           # Signal CloudFormation
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --region ${AWS::Region} --resource Instance
-
 
 Outputs:
   InstanceEndpoint:
